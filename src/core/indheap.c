@@ -731,11 +731,43 @@ static void igraph_d_indheap_i_switch(igraph_d_indheap_t* h, igraph_integer_t e1
 #define LEFTCHILD(x)  (((x)+1)*2-1)
 #define RIGHTCHILD(x) (((x)+1)*2)
 
-/* This is a smart indexed heap. In addition to the "normal" indexed heap
-   it allows to access every element through its index in O(1) time.
-   In other words, for this heap the indexing operation is O(1), the
-   normal heap does this in O(n) time.... */
+/* This is a smart indexed heap. In addition to the "normal" indexed heap it
+   allows to access every element through its index in O(1) time. In other
+   words, for this heap the indexing operation is O(1), the normal heap does
+   this in O(n) time.
 
+   Implementation Details: The heap is implemented in three different vectors:
+   \c data, \c index and \c index2. \c data and \c index constitute the
+   "normal" indexed heap. When key-value pairs are placed into the heap, the
+   key is stored in \c index and the value is stored in \c data. When swaps
+   are made to maintain the heap invariant, swaps are made in both vectors so
+   that they are always moved as if they were a single pair. The maximum
+   element is always at data[0], and the corresponding key is in index[0].
+
+   In order to allow looking up the value of a key in constant time, we
+   store another vector \c index2. \c index2 stores for each key the position
+   in \c index and \c data the key and corresponding value reside, and is
+   updated with every swap. E.g. We can use \c index[index2[42]] to find
+   the position in \c data and \c index the key-value pair 42 is stored.
+
+   However, it is NOT true that <code> index[index2[x]] == x </code>. This is
+   because there are two special values: 0 and 1:
+
+   - <code> index2[x] == 0 </code> indicates that the key x is in the heap.
+   We can query whether an key is in the heap using
+   <code> igraph_2wheap_has_elem(heap, key) </code>, which will return false when
+   \c heap->index2[key] is zero and true otherwise.
+   - <code> index2[x] == 1 </code> indicates that the key is "deactivated".
+   Deactivated items are technically still in the heap, but behave as though
+   they have been removed. I.e. when querying for the maximum, they are
+   ignored. We can distinguish between genuine removal and deactivation with
+   \c igraph_2wheap_has_elem() and \c igraph_2wheap_has_active() .
+   - Finally, if an item is in the heap and has not been deactivated,
+   <code> heap->index2[key] - 2 </code> tells you the index where the value
+   is stored in \c heap->data and \c heap-index
+   */
+
+/* Switches two elements in the heap, don't call it directly. */
 static void igraph_i_2wheap_switch(igraph_2wheap_t *h,
                                    igraph_integer_t e1, igraph_integer_t e2) {
     if (e1 != e2) {
@@ -755,6 +787,7 @@ static void igraph_i_2wheap_switch(igraph_2wheap_t *h,
     }
 }
 
+/* Moves an element up in the heap, don't call it directly. */
 static void igraph_i_2wheap_shift_up(igraph_2wheap_t *h,
                                      igraph_integer_t elem) {
     if (elem == 0 || VECTOR(h->data)[elem] < VECTOR(h->data)[PARENT(elem)]) {
@@ -765,6 +798,7 @@ static void igraph_i_2wheap_shift_up(igraph_2wheap_t *h,
     }
 }
 
+/* Moves an element down in the heap, don't call it directly. */
 static void igraph_i_2wheap_sink(igraph_2wheap_t *h,
                                  igraph_integer_t head) {
     igraph_integer_t size = igraph_2wheap_size(h);
@@ -790,6 +824,7 @@ static void igraph_i_2wheap_sink(igraph_2wheap_t *h,
 /* These are public   */
 /* ------------------ */
 
+/* Initializes a 2-way indexed heap. */
 igraph_error_t igraph_2wheap_init(igraph_2wheap_t *h, igraph_integer_t size) {
     h->size = size;
     /* We start with the biggest */
@@ -802,22 +837,26 @@ igraph_error_t igraph_2wheap_init(igraph_2wheap_t *h, igraph_integer_t size) {
     return IGRAPH_SUCCESS;
 }
 
+/* Destroys an initialized 2-way indexed heap. */
 void igraph_2wheap_destroy(igraph_2wheap_t *h) {
     igraph_vector_destroy(&h->data);
     igraph_vector_int_destroy(&h->index);
     igraph_vector_int_destroy(&h->index2);
 }
 
+/* Removes all elements from the heap. */
 void igraph_2wheap_clear(igraph_2wheap_t *h) {
     igraph_vector_clear(&h->data);
     igraph_vector_int_clear(&h->index);
     igraph_vector_int_null(&h->index2);
 }
 
+/* Returns whether the heap is empty. */
 igraph_bool_t igraph_2wheap_empty(const igraph_2wheap_t *h) {
     return igraph_vector_empty(&h->data);
 }
 
+/* Inserts an indexed element into the heap. */
 igraph_error_t igraph_2wheap_push_with_index(igraph_2wheap_t *h,
                                   igraph_integer_t idx, igraph_real_t elem) {
 
@@ -833,35 +872,43 @@ igraph_error_t igraph_2wheap_push_with_index(igraph_2wheap_t *h,
     return IGRAPH_SUCCESS;
 }
 
+/* Returns the number of elements in the heap. */
 igraph_integer_t igraph_2wheap_size(const igraph_2wheap_t *h) {
     return igraph_vector_size(&h->data);
 }
 
+/* Returns the maximum index size the heap can store. */
 igraph_integer_t igraph_2wheap_max_size(const igraph_2wheap_t *h) {
     return h->size;
 }
 
+/* Returns the maximum element in the heap. */
 igraph_real_t igraph_2wheap_max(const igraph_2wheap_t *h) {
     return VECTOR(h->data)[0];
 }
 
+/* Returns the index of the maximum element in the heap. */
 igraph_integer_t igraph_2wheap_max_index(const igraph_2wheap_t *h) {
     return VECTOR(h->index)[0];
 }
 
+/* Returns whether an element exists in the heap. */
 igraph_bool_t igraph_2wheap_has_elem(const igraph_2wheap_t *h, igraph_integer_t idx) {
     return VECTOR(h->index2)[idx] != 0;
 }
 
+/* Returns whether an element is active or not. */
 igraph_bool_t igraph_2wheap_has_active(const igraph_2wheap_t *h, igraph_integer_t idx) {
     return VECTOR(h->index2)[idx] > 1;
 }
 
+/* Returns the element associated with a given index. */
 igraph_real_t igraph_2wheap_get(const igraph_2wheap_t *h, igraph_integer_t idx) {
     igraph_integer_t i = VECTOR(h->index2)[idx] - 2;
     return VECTOR(h->data)[i];
 }
 
+/* Removes the maximum element from the heap. */
 igraph_real_t igraph_2wheap_delete_max(igraph_2wheap_t *h) {
 
     igraph_real_t tmp = VECTOR(h->data)[0];
@@ -877,6 +924,7 @@ igraph_real_t igraph_2wheap_delete_max(igraph_2wheap_t *h) {
     return tmp;
 }
 
+/* Deactivates the maximum element in the heap. */
 igraph_real_t igraph_2wheap_deactivate_max(igraph_2wheap_t *h) {
 
     igraph_real_t tmp = VECTOR(h->data)[0];
@@ -890,6 +938,7 @@ igraph_real_t igraph_2wheap_deactivate_max(igraph_2wheap_t *h) {
     return tmp;
 }
 
+/* Deletes the maximum element from the heap and stores its index in idx. */
 igraph_real_t igraph_2wheap_delete_max_index(igraph_2wheap_t *h, igraph_integer_t *idx) {
 
     igraph_real_t tmp = VECTOR(h->data)[0];
@@ -906,6 +955,7 @@ igraph_real_t igraph_2wheap_delete_max_index(igraph_2wheap_t *h, igraph_integer_
     return tmp;
 }
 
+/* Changes the element value associated with a given index. */
 igraph_error_t igraph_2wheap_modify(igraph_2wheap_t *h, igraph_integer_t idx, igraph_real_t elem) {
 
     igraph_integer_t pos = VECTOR(h->index2)[idx] - 2;
@@ -919,8 +969,7 @@ igraph_error_t igraph_2wheap_modify(igraph_2wheap_t *h, igraph_integer_t idx, ig
     return IGRAPH_SUCCESS;
 }
 
-/* Check that the heap is in a consistent state */
-
+/* Check that the heap is in a consistent state. */
 igraph_error_t igraph_2wheap_check(igraph_2wheap_t *h) {
     igraph_integer_t size = igraph_2wheap_size(h);
     igraph_integer_t i;
